@@ -1,108 +1,118 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from datetime import datetime
 import uvicorn
 
 app = FastAPI()
 
 class ConnectionManager:
     def __init__(self):
-        # websocket -> room
-        self.active_connections: dict[WebSocket, str] = {}
-        # websocket -> username
-        self.usernames: dict[WebSocket, str] = {}
+        self.rooms = {}        # websocket -> room
+        self.users = {}        # websocket -> username
 
-    async def connect(self, websocket: WebSocket, username: str, room: str):
-        self.active_connections[websocket] = room
-        self.usernames[websocket] = username
-        await self.broadcast_system(room, f"{username} joined {room} 👋")
+    def now(self):
+        return datetime.now().isoformat()
 
-    def disconnect(self, websocket: WebSocket):
-        room = self.active_connections.get(websocket)
-        username = self.usernames.get(websocket, "Someone")
-        self.active_connections.pop(websocket, None)
-        self.usernames.pop(websocket, None)
+    async def connect(self, ws: WebSocket, username: str, room: str):
+        self.rooms[ws] = room
+        self.users[ws] = username
+        await self.broadcast_users(room)
+        await self.broadcast(room, {
+            "type": "system",
+            "message": f"{username} joined the room 👋",
+            "timestamp": self.now()
+        })
+
+    def disconnect(self, ws: WebSocket):
+        room = self.rooms.get(ws)
+        username = self.users.get(ws)
+        self.rooms.pop(ws, None)
+        self.users.pop(ws, None)
         return username, room
 
-    async def broadcast_room(self, room: str, data: dict):
-        for ws, user_room in self.active_connections.items():
-            if user_room == room:
+    async def broadcast(self, room: str, data: dict):
+        for ws, ws_room in self.rooms.items():
+            if ws_room == room:
                 await ws.send_json(data)
 
-    async def broadcast_system(self, room: str, message: str):
-        await self.broadcast_room(room, {
-            "type": "system",
-            "message": message
+    async def broadcast_users(self, room: str):
+        users = [
+            name for ws, name in self.users.items()
+            if self.rooms.get(ws) == room
+        ]
+        await self.broadcast(room, {
+            "type": "users",
+            "users": users
         })
 
 manager = ConnectionManager()
 
-@app.get("/")
-async def root():
-    return {"message": "Chatterbox Unified WebSocket Server Running"}
-
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    print("Client connected")
-
-    username = "Anonymous"
-    room = "general"
+async def websocket(ws: WebSocket):
+    await ws.accept()
 
     try:
-        # First message must be join info
-        join_data = await websocket.receive_json()
+        join = await ws.receive_json()
+        username = join["username"]
+        room = join["room"]
 
-        username = join_data.get("username", "Anonymous")
-        room = join_data.get("room", "general")
-
-        await manager.connect(websocket, username, room)
+        await manager.connect(ws, username, room)
 
         while True:
-            data = await websocket.receive_json()
-            event_type = data.get("type")
+            data = await ws.receive_json()
 
-            if event_type == "chat":
-                message = data.get("message", "").strip()
-                if not message:
-                    continue
-
-                print(f"[{room}] {username}: {message}")
-
-                # Echo (Milestone 1 compatibility)
-                await websocket.send_json({
-                    "type": "echo",
-                    "message": f"You said -> {message}"
-                })
-
-                # Broadcast to room
-                await manager.broadcast_room(room, {
+            if data["type"] == "chat":
+                await manager.broadcast(room, {
                     "type": "chat",
                     "username": username,
-                    "message": message
+                    "message": data["message"],
+                    "timestamp": manager.now()
                 })
 
-            elif event_type == "typing":
-                await manager.broadcast_room(room, {
+            elif data["type"] == "typing":
+                await manager.broadcast(room, {
                     "type": "typing",
                     "username": username
                 })
 
-            elif event_type == "stop_typing":
-                await manager.broadcast_room(room, {
-                    "type": "stop_typing",
-                    "username": username
+            elif data["type"] == "stop_typing":
+                await manager.broadcast(room, {
+                    "type": "stop_typing"
                 })
 
-    except WebSocketDisconnect:
-        username, room = manager.disconnect(websocket)
-        if room:
-            await manager.broadcast_system(room, f"{username} left {room} ❌")
-        print(f"{username} disconnected")
+            elif data["type"] == "switch_room":
+                new_room = data["room"]
+                old_room = manager.rooms.get(ws)
 
-    except Exception as e:
-        username, room = manager.disconnect(websocket)
+                if new_room == old_room:
+                    continue
+
+                manager.rooms[ws] = new_room
+
+                await manager.broadcast_users(old_room)
+                await manager.broadcast(old_room, {
+                    "type": "system",
+                    "message": f"{username} left the room ❌",
+                    "timestamp": manager.now()
+                })
+
+                await manager.broadcast_users(new_room)
+                await manager.broadcast(new_room, {
+                    "type": "system",
+                    "message": f"{username} joined the room 👋",
+                    "timestamp": manager.now()
+                })
+
+                room = new_room
+
+    except WebSocketDisconnect:
+        username, room = manager.disconnect(ws)
         if room:
-            await manager.broadcast_system(room, f"{username} left due to error ❌")
-        print("Error:", e)
+            await manager.broadcast_users(room)
+            await manager.broadcast(room, {
+                "type": "system",
+                "message": f"{username} left the room ❌",
+                "timestamp": manager.now()
+            })
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
