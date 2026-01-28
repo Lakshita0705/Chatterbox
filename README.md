@@ -53,11 +53,19 @@ The project is implemented milestone-wise, gradually adding features such as roo
 
 ```
 chatterbox/
-├── main.py          # FastAPI backend with WebSocket logic
-├── login.html       # Login page (username + room selection)
-├── chat.html        # Chat UI (rooms, messages, typing indicator)
-├── README.md        # Project documentation
-└── .venv/           # Virtual environment (not pushed to GitHub)
+├── backend/
+│   ├── main.py            # FastAPI backend with WebSocket logic
+│   └── requirements.txt  # Backend dependencies
+│
+├── frontend/
+│   ├── login.html         # Login page (username & room selection)
+│   └── chat.html          # Chat UI (rooms, messages, typing indicator)
+│
+├── .gitignore             # Git ignore rules
+├── LICENSE                # License file
+├── README.md              # Project documentation
+└── .idea/                 # IDE configuration (not pushed)
+
 ```
 
 
