@@ -1,9 +1,10 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from datetime import datetime
+from datetime import datetime, timezone
 import uvicorn
 import uuid
 
 app = FastAPI()
+
 
 @app.get("/")
 def root():
@@ -20,7 +21,9 @@ class ConnectionManager:
         self.messages = {}     # message_id -> {username, room, message, timestamp}
     
     def now(self):
-        return datetime.now().isoformat()
+        ts = datetime.now(timezone.utc).isoformat()
+        print("SERVER TIMESTAMP:", ts)
+        return ts
     
     async def connect(self, ws: WebSocket, username: str, room: str):
         self.rooms[ws] = room
@@ -173,3 +176,4 @@ async def websocket(ws: WebSocket):
 
 if __name__ == "__main__":
     uvicorn.run(app)
+
